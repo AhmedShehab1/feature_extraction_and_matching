@@ -10,6 +10,8 @@ from typing import Iterable, List, Sequence, Tuple
 import cv2
 import numpy as np
 
+NCC_INVALID_VALUE = -1.0
+
 
 @dataclass
 class MatchResult:
@@ -79,7 +81,7 @@ def match_descriptors_ncc(descriptors_1: np.ndarray, descriptors_2: np.ndarray) 
     ncc_matrix = np.divide(
         numerator,
         denominator,
-        out=np.full_like(numerator, fill_value=-1.0, dtype=np.float32),
+        out=np.full_like(numerator, fill_value=NCC_INVALID_VALUE, dtype=np.float32),
         where=denominator > 0,
     )
 
