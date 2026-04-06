@@ -10,7 +10,7 @@ from typing import Iterable, List, Sequence, Tuple
 import cv2
 import numpy as np
 
-NCC_INVALID_VALUE = -1.0
+NCC_INVALID_VALUE = float("-inf")
 
 
 @dataclass
@@ -89,6 +89,7 @@ def match_descriptors_ncc(descriptors_1: np.ndarray, descriptors_2: np.ndarray) 
     best_scores = ncc_matrix[np.arange(ncc_matrix.shape[0]), best_indices]
     elapsed = time.perf_counter() - start
 
+    valid_rows = np.where(np.isfinite(best_scores))[0]
     matches = [
         cv2.DMatch(
             _queryIdx=int(i),
@@ -96,7 +97,7 @@ def match_descriptors_ncc(descriptors_1: np.ndarray, descriptors_2: np.ndarray) 
             _imgIdx=0,
             _distance=float(1.0 - best_scores[i]),
         )
-        for i in range(descriptors_1.shape[0])
+        for i in valid_rows
     ]
     matches.sort(key=lambda m: m.distance)
     return MatchResult(matches=matches, scores=best_scores.astype(np.float32), elapsed_seconds=elapsed)
