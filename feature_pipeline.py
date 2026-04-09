@@ -10,6 +10,8 @@ from typing import Iterable, List, Sequence, Tuple
 import cv2
 import numpy as np
 
+from harris_detection import detect_harris_features
+
 NCC_INVALID_VALUE = float("-inf")
 
 
@@ -130,27 +132,90 @@ def _load_image(path: str) -> np.ndarray:
     return image
 
 
-def process_image_pair(image_path_1: str, image_path_2: str, output_dir: str, top_k: int = 50) -> None:
+def _detect_keypoints(
+    image: np.ndarray,
+    detector: str,
+) -> Tuple[List[cv2.KeyPoint], np.ndarray, float]:
+    """Detect keypoints and compute SIFT descriptors.
+
+    When *detector* is ``"sift"`` the full SIFT pipeline is used.
+    For ``"harris"`` or ``"lambda"`` the keypoints come from
+    :func:`detect_harris_features` and descriptors are computed
+    with ``SIFT.compute``.
+    """
+    if detector == "sift":
+        start = time.perf_counter()
+        keypoints, descriptors = generate_sift_descriptors(image)
+        elapsed = time.perf_counter() - start
+        return keypoints, descriptors, elapsed
+
+    # Harris or Lambda detection
+    keypoints, detect_time = detect_harris_features(image, method=detector)
+    # Compute SIFT descriptors on detected keypoints
+    gray = _to_grayscale(image)
+    sift = cv2.SIFT_create()
+    keypoints, descriptors = sift.compute(gray, keypoints)
+    if descriptors is None:
+        descriptors = np.empty((0, 128), dtype=np.float32)
+    return list(keypoints), descriptors, detect_time
+
+
+def _save_keypoint_visualization(
+    image: np.ndarray,
+    keypoints: List[cv2.KeyPoint],
+    output_path: str,
+) -> None:
+    """Draw detected keypoints on the image and save to disk."""
+    vis = cv2.drawKeypoints(image, keypoints, None,
+                            color=(0, 255, 0),
+                            flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    cv2.imwrite(output_path, vis)
+
+
+def process_image_pair(
+    image_path_1: str,
+    image_path_2: str,
+    output_dir: str,
+    top_k: int = 50,
+    detector: str = "sift",
+) -> None:
     image_1 = _load_image(image_path_1)
     image_2 = _load_image(image_path_2)
-
-    descriptor_start = time.perf_counter()
-    keypoints_1, descriptors_1 = generate_sift_descriptors(image_1)
-    keypoints_2, descriptors_2 = generate_sift_descriptors(image_2)
-    descriptor_time = time.perf_counter() - descriptor_start
-
-    ssd_result = match_descriptors_ssd(descriptors_1, descriptors_2)
-    ncc_result = match_descriptors_ncc(descriptors_1, descriptors_2)
-
-    print(f"Image Pair: {os.path.basename(image_path_1)} <-> {os.path.basename(image_path_2)}")
-    print(f"SIFT_Descriptor_Time: [{descriptor_time:.2f}] seconds")
-    print(f"Matching_SSD_Time: [{ssd_result.elapsed_seconds:.2f}] seconds")
-    print(f"Matching_NCC_Time: [{ncc_result.elapsed_seconds:.2f}] seconds")
-
     os.makedirs(output_dir, exist_ok=True)
     stem_1 = os.path.splitext(os.path.basename(image_path_1))[0]
     stem_2 = os.path.splitext(os.path.basename(image_path_2))[0]
 
+    # --- Keypoint detection & descriptor computation ---
+    keypoints_1, descriptors_1, detect_time_1 = _detect_keypoints(image_1, detector)
+    keypoints_2, descriptors_2, detect_time_2 = _detect_keypoints(image_2, detector)
+    total_detect_time = detect_time_1 + detect_time_2
+
+    # --- Save keypoint visualizations for Harris / Lambda ---
+    if detector in ("harris", "lambda"):
+        tag = "harris" if detector == "harris" else "lambda"
+        _save_keypoint_visualization(
+            image_1, keypoints_1,
+            os.path.join(output_dir, f"{stem_1}_{tag}_points.jpg"),
+        )
+        _save_keypoint_visualization(
+            image_2, keypoints_2,
+            os.path.join(output_dir, f"{stem_2}_{tag}_points.jpg"),
+        )
+
+    # --- Matching ---
+    ssd_result = match_descriptors_ssd(descriptors_1, descriptors_2)
+    ncc_result = match_descriptors_ncc(descriptors_1, descriptors_2)
+
+    # --- Print summary ---
+    print(f"Image Pair: {os.path.basename(image_path_1)} <-> {os.path.basename(image_path_2)}")
+    print(f"Detector: {detector.upper()}")
+    print(f"  Keypoints (img1): {len(keypoints_1)}")
+    print(f"  Keypoints (img2): {len(keypoints_2)}")
+    print(f"  Detection_Time: [{total_detect_time:.4f}] seconds")
+    print(f"  Matching_SSD_Time: [{ssd_result.elapsed_seconds:.4f}] seconds")
+    print(f"  Matching_NCC_Time: [{ncc_result.elapsed_seconds:.4f}] seconds")
+
+    # --- Save match visualizations ---
     ssd_vis = draw_matches(image_1, keypoints_1, image_2, keypoints_2, ssd_result.matches, top_k=top_k)
     ncc_vis = draw_matches(image_1, keypoints_1, image_2, keypoints_2, ncc_result.matches, top_k=top_k)
 
@@ -163,10 +228,16 @@ def _iter_image_pairs(image_paths: Iterable[str]) -> Iterable[Tuple[str, str]]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="SIFT descriptor extraction and SSD/NCC feature matching pipeline")
+    parser = argparse.ArgumentParser(description="Feature extraction and SSD/NCC matching pipeline")
     parser.add_argument("images", nargs="+", help="Input image paths. All unique pairs are processed.")
     parser.add_argument("--output-dir", default="output_matches", help="Directory for match visualizations")
     parser.add_argument("--top-k", type=int, default=50, help="Number of matches to visualize")
+    parser.add_argument(
+        "--detector",
+        choices=["sift", "harris", "lambda"],
+        default="sift",
+        help="Keypoint detector to use (default: sift)",
+    )
     return parser.parse_args()
 
 
@@ -175,7 +246,12 @@ def main() -> None:
     if len(args.images) < 2:
         raise ValueError("Provide at least two images to process matching.")
     for image_path_1, image_path_2 in _iter_image_pairs(args.images):
-        process_image_pair(image_path_1, image_path_2, args.output_dir, top_k=args.top_k)
+        process_image_pair(
+            image_path_1, image_path_2,
+            args.output_dir,
+            top_k=args.top_k,
+            detector=args.detector,
+        )
 
 
 if __name__ == "__main__":
