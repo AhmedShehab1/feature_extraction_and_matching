@@ -86,28 +86,76 @@ def main() -> None:
     # ---- Sidebar controls ----
     st.sidebar.header("⚙️ Detection Parameters")
 
-    threshold = st.sidebar.slider(
-        "Threshold (fraction of max response)",
-        min_value=0.001,
-        max_value=0.100,
-        value=0.010,
-        step=0.001,
-        format="%.3f",
-    )
+    # ── Harris-specific parameters ──
+    with st.sidebar.container(border=True):
+        st.markdown("🟢 **Harris Parameters**")
+        threshold_harris = st.slider(
+            "Harris Threshold",
+            min_value=0.001,
+            max_value=0.100,
+            value=0.010,
+            step=0.001,
+            format="%.3f",
+        )
+        k = st.slider(
+            "Harris k factor",
+            min_value=0.01,
+            max_value=0.10,
+            value=0.04,
+            step=0.01,
+            format="%.2f",
+        )
 
-    nms_window = st.sidebar.slider(
-        "NMS window size",
-        min_value=3,
-        max_value=9,
-        value=5,
-        step=2,
-    )
+    # ── λ−-specific parameters ──
+    with st.sidebar.container(border=True):
+        st.markdown("🔵 **λ− Parameters**")
+        threshold_lambda = st.slider(
+            "λ− Threshold",
+            min_value=0.001,
+            max_value=0.100,
+            value=0.010,
+            step=0.001,
+            format="%.3f",
+        )
 
-    # ---- Bonus: display toggles ----
+    # ── Shared parameters (apply to both methods) ──
+    with st.sidebar.container(border=True):
+        st.markdown("🔗 **Shared Parameters**")
+        gaussian_ksize = st.slider(
+            "Gaussian Kernel Size",
+            min_value=3,
+            max_value=15,
+            value=5,
+            step=2,
+        )
+        gaussian_sigma = st.slider(
+            "Gaussian Sigma",
+            min_value=0.5,
+            max_value=5.0,
+            value=1.5,
+            step=0.1,
+            format="%.1f",
+        )
+        nms_window = st.slider(
+            "NMS window size",
+            min_value=3,
+            max_value=9,
+            value=5,
+            step=2,
+        )
+
+    # ── Display options ──
     st.sidebar.header("🎛️ Display Options")
-    show_harris = st.sidebar.checkbox("Show Harris keypoints", value=True)
-    show_lambda = st.sidebar.checkbox("Show λ− keypoints", value=True)
-    show_overlay = st.sidebar.checkbox("Overlay both on one image", value=False)
+    with st.sidebar.container(border=True):
+        keypoint_size = st.slider(
+            "Keypoint Size",
+            min_value=1,
+            max_value=20,
+            value=10,
+        )
+        show_harris = st.checkbox("Show Harris keypoints", value=True)
+        show_lambda = st.checkbox("Show λ− keypoints", value=True)
+        show_overlay = st.checkbox("Overlay both on one image", value=False)
 
     # ---- Image upload ----
     uploaded_file = st.file_uploader(
@@ -126,14 +174,21 @@ def main() -> None:
     harris_kps, harris_time = detect_harris_features(
         image_bgr,
         method="harris",
-        threshold_ratio=threshold,
+        threshold_ratio=threshold_harris,
         nms_window=nms_window,
+        k=k,
+        gaussian_ksize=gaussian_ksize,
+        gaussian_sigma=gaussian_sigma,
+        keypoint_size=keypoint_size,
     )
     lambda_kps, lambda_time = detect_harris_features(
         image_bgr,
         method="lambda",
-        threshold_ratio=threshold,
+        threshold_ratio=threshold_lambda,
         nms_window=nms_window,
+        gaussian_ksize=gaussian_ksize,
+        gaussian_sigma=gaussian_sigma,
+        keypoint_size=keypoint_size,
     )
 
     # ---- Layout: three columns ----
